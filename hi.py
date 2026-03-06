@@ -137,20 +137,17 @@ if st.session_state.route_data:
     # ВЫВОД КАРТЫ
     st_folium(m, width="100%", height=500, key="nav_map")
 
-        # 5. Кнопка для запуска (Прямой протокол навигации)
-    origin = f"{s_lat},{s_lon}"
+        # 5. Кнопка для телефона (Google Maps)
     waypoints = "|".join([f"{p['lat']},{p['lon']}" for p in stops])
-
-    # Прямая ссылка-команда для Android (без http)
-    nav_url = f"google.navigation:q={origin}&waypoints={waypoints}"
+    google_url = f"https://www.google.com/maps/dir/?api=1&origin={s_lat},{s_lon}&destination={s_lat},{s_lon}&waypoints={waypoints}&travelmode=driving"
 
     st.markdown(f"""
-            <a href="{nav_url}">
-                <div style="background-color:#28a745; color:white; padding:15px; text-align:center; border-radius:10px; font-size:20px; font-weight:bold; cursor:pointer;">
-                    🚀 ОТКРЫТЬ В НАВИГАТОРЕ
-                </div>
-            </a>
-        """, unsafe_allow_html=True)
+        <a href="{google_url}" target="_blank" style="text-decoration: none;">
+            <div style="background-color:#28a745; color:white; padding:15px; text-align:center; border-radius:10px; font-size:20px; font-weight:bold; cursor:pointer; margin-top:20px;">
+                🚀 ОТКРЫТЬ В НАВИГАТОРЕ (С ПРОБКАМИ)
+            </div>
+        </a>
+    """, unsafe_allow_html=True)
 
     # Список остановок текстом
     with st.expander("Посмотреть текстовый план маршрута"):
@@ -159,4 +156,5 @@ if st.session_state.route_data:
             st.write(f"{i}. {p['name']}")
 
         st.write(f"🏁 **Возврат:** {s_full_name}")
+
 

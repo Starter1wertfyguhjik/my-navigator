@@ -118,68 +118,62 @@ if btn_calc:
                         "close": close_time
                     })
 
-            current_pos = (start_res[0], start_res[1])
+           ordered = []
+temp_pts = points_list[:]
 
-            current_time = datetime.now().hour
+current_pos = (start_res[0], start_res[1])
 
-            speed = 40
+current_time = datetime.now().hour
+speed = 40
 
-            ordered = []
+while temp_pts:
 
-            temp_pts = points_list[:]
+    candidates = []
 
-            while temp_pts:
+    for p in temp_pts:
 
-                best_point = None
-                best_score = None
+        dist = geodesic(
+            current_pos,
+            (p["lat"], p["lon"])
+        ).km
 
-                for p in temp_pts:
+        travel_time = dist / speed
 
-                    dist = geodesic(
-                        current_pos,
-                        (p["lat"], p["lon"])
-                    ).km
+        arrival = current_time + travel_time
 
-                    travel_time = dist / speed
+        # если успеваем
+        if arrival <= p["close"]:
+            candidates.append((p, dist))
 
-                    arrival = current_time + travel_time
+    # если есть доступные точки
+    if candidates:
 
-                    if arrival > p["close"]:
-                        continue
+        next_pt = min(candidates, key=lambda x: x[1])[0]
 
-                    urgency = p["close"] - arrival
+    else:
+        # если ни в одну не успеваем — берем ближайшую
+        next_pt = min(
+            temp_pts,
+            key=lambda x: geodesic(
+                current_pos,
+                (x["lat"], x["lon"])
+            ).km
+        )
 
-                    score = dist + (1 / (urgency + 0.1))
+    ordered.append(next_pt)
 
-                    if best_score is None or score < best_score:
+    dist = geodesic(
+        current_pos,
+        (next_pt["lat"], next_pt["lon"])
+    ).km
 
-                        best_score = score
-                        best_point = p
+    travel_time = dist / speed
 
-                if best_point is None:
-                    break
+    current_time += travel_time
 
-                ordered.append(best_point)
+    current_pos = (next_pt["lat"], next_pt["lon"])
 
-                dist = geodesic(
-                    current_pos,
-                    (best_point["lat"], best_point["lon"])
-                ).km
-
-                current_time += dist / speed
-
-                current_pos = (best_point["lat"], best_point["lon"])
-
-                temp_pts.remove(best_point)
-
-            st.session_state.route_data = {
-                "start": start_res,
-                "ordered_stops": ordered
-            }
-
-        else:
-
-            st.error("Не удалось найти стартовый адрес")
+    temp_pts.remove(next_pt)
 
 # ---------------- ОТРИСОВКА КАРТЫ ----------------
 
@@ -275,4 +269,5 @@ if st.session_state.route_data:
             st.write(f"{i}. {p['name']} (до {p['close']}:00)")
 
         st.write(f"🏁 **Возврат:** {s_full_name}")
+
 

@@ -137,16 +137,26 @@ if st.session_state.route_data:
     # ВЫВОД КАРТЫ
     st_folium(m, width="100%", height=500, key="nav_map")
 
-        # 5. Кнопка для телефона (Google Maps)
+    # 5. Кнопка для телефона (Google Maps)
+    origin = f"{s_lat},{s_lon}"
     waypoints = "|".join([f"{p['lat']},{p['lon']}" for p in stops])
-    google_url = f"https://www.google.com/maps/dir/?api=1&origin={s_lat},{s_lon}&destination={s_lat},{s_lon}&waypoints={waypoints}&travelmode=driving"
+
+    google_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={origin}&waypoints={waypoints}&travelmode=driving"
 
     st.markdown(f"""
-        <a href="{google_url}" style="text-decoration:none;">
-            <div style="background-color:#28a745; color:white; padding:15px; text-align:center; border-radius:10px; font-size:20px; font-weight:bold; cursor:pointer; margin-top:20px;">
-                🚀 ОТКРЫТЬ В НАВИГАТОРЕ (С ПРОБКАМИ)
-            </div>
-        </a>
+    <a href="{google_url}" style="text-decoration: none;">
+    <div style="
+    background-color:#28a745;
+    color:white;
+    padding:20px;
+    text-align:center;
+    border-radius:15px;
+    font-size:22px;
+    font-weight:bold;
+    cursor:pointer;">
+    🚀 ЗАПУСТИТЬ НАВИГАТОР
+    </div>
+    </a>
     """, unsafe_allow_html=True)
 
     # Список остановок текстом
@@ -154,8 +164,8 @@ if st.session_state.route_data:
         st.write(f"🚩 **Начало:** {s_full_name}")
         for i, p in enumerate(stops, 1):
             st.write(f"{i}. {p['name']}")
-
         st.write(f"🏁 **Возврат:** {s_full_name}")
+
 
 
 

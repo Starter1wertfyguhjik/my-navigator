@@ -5,21 +5,31 @@ from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 import requests
 from datetime import datetime, timedelta
-import pytz  # Добавляем для работы с часовыми поясами
+import pytz  # Часовые пояса
 
-# Настройка страницы
 st.set_page_config(page_title="Smart Navigator MSK", layout="wide")
 
 if "route_data" not in st.session_state:
     st.session_state.route_data = None
 
-st.title("🚗 Умный Навигатор (Московское время)")
+st.title("🚗 Умный Навигатор")
 
-# ---------------- ФУНКЦИИ ----------------
+# ---------------- ФУНКЦИЯ ПОДСКАЗОК (ВЕРНУЛ) ----------------
+def address_search(query):
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {"q": query, "format": "json", "limit": 5}
+    try:
+        r = requests.get(url, params=params)
+        data = r.json()
+        return [x["display_name"] for x in data]
+    except:
+        return []
+
+# ---------------- КЭШИРОВАННЫЙ ГЕОКОДЕР ----------------
 @st.cache_data
 def get_coordinates_cached(address):
     try:
-        geolocator = Nominatim(user_agent="smart_nav_msk_2026")
+        geolocator = Nominatim(user_agent="smart_nav_full_2026")
         loc = geolocator.geocode(address, timeout=10)
         if loc:
             return loc.latitude, loc.longitude, loc.address
@@ -27,116 +37,180 @@ def get_coordinates_cached(address):
         pass
     return None
 
-# ---------------- ЛОГИКА ОПТИМИЗАЦИИ (МСК) ----------------
-def optimize_route_by_time(start_coords, points):
-    avg_speed = 30  
-    
-    # ПРИНУДИТЕЛЬНОЕ МОСКОВСКОЕ ВРЕМЯ
-    tz_moscow = pytz.timezone('Europe/Moscow')
-    current_time = datetime.now(tz_moscow) 
-    
-    current_pos = start_coords
-    ordered_route = []
-    remaining_points = points[:]
-
-    while remaining_points:
-        best_pt = None
-        min_score = float('inf')
-
-        for p in remaining_points:
-            dist = geodesic(current_pos, (p["lat"], p["lon"])).km
-            travel_hours = dist / avg_speed
-            arrival_time = current_time + timedelta(hours=travel_hours)
-
-            if p["close"]:
-                # Время закрытия точки в часовом поясе МСК
-                close_dt = current_time.replace(hour=p["close"], minute=0, second=0, microsecond=0)
-                
-                # Если точка закрывается ночью/вечером, а сейчас уже позже — перенос на след. день не делаем, 
-                # алгоритм просто пометит её как "опоздавшую"
-                hours_left = (close_dt - arrival_time).total_seconds() / 3600
-                
-                if hours_left < 0:
-                    score = 2000 + dist  # Штраф за опоздание
-                else:
-                    # Чем меньше времени до закрытия, тем выше приоритет
-                    score = dist + (hours_left * 8)
-            else:
-                score = dist + 150 
-
-            if score < min_score:
-                min_score = score
-                best_pt = p
-
-        target = best_pt if best_pt else remaining_points[0]
-        step_dist = geodesic(current_pos, (target["lat"], target["lon"])).km
-        
-        current_time += timedelta(hours=step_dist / avg_speed)
-        current_pos = (target["lat"], target["lon"])
-        ordered_route.append(target)
-        remaining_points.remove(target)
-
-    return ordered_route, datetime.now(tz_moscow).strftime("%H:%M")
-
-# ---------------- ИНТЕРФЕЙС ----------------
+# ---------------- SIDEBAR ----------------
 with st.sidebar:
-    st.header("📍 Настройка")
-    start_query = st.text_input("Откуда едем?", "Москва, Красная площадь")
+    st.header("📍 Маршрут")
+
+    start_query = st.text_input("Введите старт", "Москва, Красная площадь")
+    suggestions = address_search(start_query) if start_query else []
+    start_addr = st.selectbox("Выберите адрес из списка", suggestions) if suggestions else start_query
+
     dest_raw = st.text_area(
         "Точки (Адрес | Час закрытия)",
         "Москва, Тверская 1 | 18\nМосква, Новый Арбат 10 | 21\nМосква, ВДНХ",
         height=150
     )
-    btn_calc = st.button("🚀 Рассчитать")
 
-if btn_calc:
-    start_data = get_coordinates_cached(start_query)
-    if start_data:
-        raw_lines = [line.strip() for line in dest_raw.split("\n") if line.strip()]
-        parsed_points = []
-        for line in raw_lines:
-            if "|" in line:
-                parts = line.split("|")
-                addr, close_h = parts[0].strip(), int(parts[1].strip())
+    btn_calc = st.button("Построить маршрут")
+    st.info("Формат: 'Адрес | 18' (точка закроется в 18:00 по МСК)")
+
+# ---------------- ПАРСИНГ ТОЧЕК ----------------
+def parse_points(text):
+    points = []
+    lines = text.split("\n")
+    for line in lines:
+        if not line.strip(): continue
+        if "|" in line:
+            parts = line.split("|")
+            addr = parts[0].strip()
+            try:
+                close = int(parts[1].strip())
+            except:
+                close = None
+        else:
+            addr = line.strip()
+            close = None
+        points.append((addr, close))
+    return points
+
+# ---------------- УМНАЯ ОПТИМИЗАЦИЯ (МСК + СРОЧНОСТЬ) ----------------
+def optimize_route(start, points_list):
+    speed = 30  # средняя скорость км/ч
+    
+    # УСТАНОВКА МОСКОВСКОГО ВРЕМЕНИ
+    tz_moscow = pytz.timezone('Europe/Moscow')
+    now = datetime.now(tz_moscow)
+    
+    current_pos = start
+    ordered = []
+    temp = points_list[:]
+
+    while temp:
+        best = None
+        min_score = float('inf')
+
+        for p in temp:
+            dist = geodesic(current_pos, (p["lat"], p["lon"])).km
+            travel_hours = dist / speed
+            arrival = now + timedelta(hours=travel_hours)
+
+            if p["close"]:
+                # Время закрытия именно сегодня по МСК
+                close_time = now.replace(hour=p["close"], minute=0, second=0, microsecond=0)
+                
+                # Сколько часов осталось до закрытия с момента прибытия
+                remaining = (close_time - arrival).total_seconds() / 3600
+                
+                if remaining < 0:
+                    # Если уже закрыто — низкий приоритет
+                    score = 2000 + dist 
+                else:
+                    # Чем меньше времени до закрытия, тем важнее точка (меньше score)
+                    score = dist + (remaining * 10)
             else:
-                addr, close_h = line.strip(), None
-            
+                # Точки без времени — обычный приоритет
+                score = dist + 200
+
+            if score < min_score:
+                min_score = score
+                best = p
+
+        chosen = best if best else temp[0]
+        dist_to_chosen = geodesic(current_pos, (chosen["lat"], chosen["lon"])).km
+        
+        # Обновляем виртуальное время прибытия для следующего шага
+        now += timedelta(hours=dist_to_chosen / speed)
+        current_pos = (chosen["lat"], chosen["lon"])
+        ordered.append(chosen)
+        temp.remove(chosen)
+
+    return ordered, datetime.now(tz_moscow).strftime("%H:%M")
+
+# ---------------- ЛОГИКА ПРИ НАЖАТИИ КНОПКИ ----------------
+if btn_calc:
+    start_coords = get_coordinates_cached(start_addr)
+    if not start_coords:
+        st.error("Не найден адрес старта")
+    else:
+        parsed = parse_points(dest_raw)
+        points_data = []
+        for addr, close in parsed:
             coords = get_coordinates_cached(addr)
             if coords:
-                parsed_points.append({"lat": coords[0], "lon": coords[1], "name": coords[2], "close": close_h})
+                points_data.append({
+                    "lat": coords[0],
+                    "lon": coords[1],
+                    "name": coords[2],
+                    "close": close
+                })
+        
+        if points_data:
+            ordered_stops, msk_time = optimize_route((start_coords[0], start_coords[1]), points_data)
+            st.session_state.route_data = {
+                "start": start_coords,
+                "stops": ordered_stops,
+                "msk_start_time": msk_time
+            }
+        else:
+            st.error("Не удалось найти координаты для точек маршрута")
 
-        if parsed_points:
-            final_stops, msk_now = optimize_route_by_time((start_data[0], start_data[1]), parsed_points)
-            st.session_state.route_data = {"start": start_data, "stops": final_stops, "time": msk_now}
-
-# ---------------- КАРТА И КНОПКА ----------------
+# ---------------- КАРТА И ВЫВОД ----------------
 if st.session_state.route_data:
-    res = st.session_state.route_data
-    s_lat, s_lon, s_name = res["start"]
-    stops = res["stops"]
+    data = st.session_state.route_data
+    s_lat, s_lon, s_name = data["start"]
+    stops = data["stops"]
 
-    st.write(f"🕒 Время отправления (МСК): **{res['time']}**")
+    st.subheader(f"🕒 Время выезда по Москве: {data['msk_start_time']}")
 
-    path_coords = [(s_lat, s_lon)] + [(p["lat"], p["lon"]) for p in stops] + [(s_lat, s_lon)]
+    # Координаты для линии (Старт -> Точки -> Старт)
+    all_coords = [(s_lat, s_lon)] + [(p['lat'], p['lon']) for p in stops] + [(s_lat, s_lon)]
+
     m = folium.Map(location=[s_lat, s_lon], zoom_start=12)
-    folium.PolyLine(path_coords, color="#3498db", weight=5).add_to(m)
-    folium.Marker([s_lat, s_lon], icon=folium.Icon(color="red")).add_to(m)
+    folium.PolyLine(all_coords, color="#2980b9", weight=5, opacity=0.7).add_to(m)
+
+    # Маркер старта
+    folium.Marker([s_lat, s_lon], tooltip="СТАРТ / ФИНИШ", icon=folium.Icon(color="red", icon="home")).add_to(m)
+
+    # Маркеры точек
     for i, p in enumerate(stops, 1):
-        folium.Marker([p["lat"], p["lon"]], tooltip=f"{i}. {p['name']}", icon=folium.Icon(color="blue")).add_to(m)
+        label = p["name"]
+        if p["close"]:
+            label += f" | Закрывается в {p['close']}:00"
+        folium.Marker([p["lat"], p["lon"]], tooltip=f"{i}. {label}", icon=folium.Icon(color="blue")).add_to(m)
 
-    # Карта без "белого экрана"
-    st_folium(m, width="100%", height=500, returned_objects=[], key="msk_map")
+    # КЛЮЧЕВОЕ: returned_objects=[] убирает белый экран при движении мыши
+    st_folium(m, width="100%", height=500, returned_objects=[], key="map_view")
 
-    # Кнопка навигации
+    # ---------------- КНОПКА НАВИГАЦИИ (УНИВЕРСАЛЬНАЯ) ----------------
     origin = f"{s_lat},{s_lon}"
-    waypts = "|".join([f"{p['lat']},{p['lon']}" for p in stops])
-    google_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={origin}&waypoints={waypts}&travelmode=driving"
+    waypoints = "|".join([f"{p['lat']},{p['lon']}" for p in stops])
+    google_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={origin}&waypoints={waypoints}&travelmode=driving"
 
-    st.markdown(f"""
+    st.markdown(
+        f"""
         <a href="{google_url}" target="_blank" style="text-decoration:none;">
-            <div style="background:#28a745; color:white; padding:20px; text-align:center; border-radius:15px; font-size:22px; font-weight:bold;">
-                🚀 ОТКРЫТЬ В НАВИГАТОРЕ
-            </div>
+        <div style="
+            background:#28a745;
+            color:white;
+            padding:20px;
+            text-align:center;
+            border-radius:15px;
+            font-size:24px;
+            font-weight:bold;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            margin-top: 20px;">
+            🚀 ОТКРЫТЬ В НАВИГАТОРЕ
+        </div>
         </a>
-    """, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True
+    )
+
+    # ---------------- СПИСОК ОСТАНОВОК (ВЕРНУЛ) ----------------
+    with st.expander("Посмотреть текстовый план маршрута"):
+        st.write(f"🚩 **Начало:** {s_name}")
+        for i, p in enumerate(stops, 1):
+            time_tag = f" — 🕒 до {p['close']}:00" if p["close"] else ""
+            st.write(f"{i}. {p['name']}{time_tag}")
+        st.write(f"🏁 **Возврат:** {s_name}")
 

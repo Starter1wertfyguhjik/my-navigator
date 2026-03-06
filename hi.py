@@ -24,14 +24,13 @@ def address_search(query):
     except:
         return []
 
-def get_coordinates(address):
-    try:
-        geolocator = Nominatim(user_agent="smart_nav")
-        loc = geolocator.geocode(address)
-        if loc:
-            return loc.latitude, loc.longitude, loc.address
-    except:
-        return None
+# ---------------- КЭШИРОВАННЫЙ ГЕОКОДЕР ----------------
+@st.cache_data
+def get_coordinates_cached(address):
+    geolocator = Nominatim(user_agent="smart_nav")
+    loc = geolocator.geocode(address)
+    if loc:
+        return loc.latitude, loc.longitude, loc.address
     return None
 
 # ---------------- SIDEBAR ----------------
@@ -86,15 +85,13 @@ def optimize_route(start, points):
             arrival = now + timedelta(hours=travel_hours)
 
             if p["close"]:
-                # время закрытия точки
                 close_time = arrival.replace(hour=p["close"], minute=0, second=0, microsecond=0)
                 remaining = (close_time - arrival).total_seconds() / 3600
                 if remaining < 0:
                     continue  # точка уже недоступна
-                score = travel_hours / remaining  # меньше → выше приоритет
+                score = travel_hours / remaining
             else:
-                # точки без времени учитываем по расстоянию, идут после срочных
-                score = dist / 1000
+                score = dist / 1000  # точки без времени идут после срочных
 
             if best_score is None or score < best_score:
                 best = p
@@ -113,14 +110,14 @@ def optimize_route(start, points):
 
 # ---------------- ПОСТРОЕНИЕ МАРШРУТА ----------------
 if btn_calc:
-    start_coords = get_coordinates(start_addr)
+    start_coords = get_coordinates_cached(start_addr)
     if not start_coords:
         st.error("Не найден старт")
     else:
         parsed = parse_points(dest_raw)
         points = []
         for addr, close in parsed:
-            coords = get_coordinates(addr)
+            coords = get_coordinates_cached(addr)
             if coords:
                 points.append({
                     "lat": coords[0],

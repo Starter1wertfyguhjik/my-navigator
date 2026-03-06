@@ -3,10 +3,9 @@ import folium
 from streamlit_folium import st_folium
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
-import requests
 from datetime import datetime
+import requests
 
-# --- НАСТРОЙКИ ---
 MAPBOX_TOKEN = "ВАШ_ТОКЕН_ЗДЕСЬ"
 
 st.set_page_config(page_title="Pro Navigator v2.0", layout="wide")
@@ -16,7 +15,7 @@ if "route_data" not in st.session_state:
 
 st.title("🚗 Умный Навигатор: Реальные дороги + Пробки")
 
-# ---------------- БОКОВАЯ ПАНЕЛЬ ----------------
+# ---------------- SIDEBAR ----------------
 
 with st.sidebar:
 
@@ -28,28 +27,28 @@ with st.sidebar:
     )
 
     dest_raw = st.text_area(
-        "Точки через точку с запятой",
+        "Точки через точку с запятой (;)",
         "Москва, Тверская 1; Москва, Новый Арбат 10; Москва, ВДНХ"
     )
 
     st.write("### ⏰ Время закрытия точек")
 
-    close1 = st.number_input("Точка 1 закрывается (час)", 1, 24, 18)
-    close2 = st.number_input("Точка 2 закрывается (час)", 1, 24, 18)
-    close3 = st.number_input("Точка 3 закрывается (час)", 1, 24, 18)
+    close1 = st.number_input("Точка 1 закрывается", 1, 24, 18)
+    close2 = st.number_input("Точка 2 закрывается", 1, 24, 18)
+    close3 = st.number_input("Точка 3 закрывается", 1, 24, 18)
+
     close_times = [close1, close2, close3]
 
     btn_calc = st.button("🗺️ Построить оптимальный путь")
-
-    st.write("---")
-    st.info("Маршрут строится по расстоянию и времени закрытия точек")
 
 # ---------------- ФУНКЦИИ ----------------
 
 def get_coordinates(address):
 
     try:
-        geolocator = Nominatim(user_agent="smart_nav_2026")
+
+        geolocator = Nominatim(user_agent="smart_nav")
+
         loc = geolocator.geocode(address, timeout=10)
 
         if loc:
@@ -66,19 +65,19 @@ def get_mapbox_route(points):
     if MAPBOX_TOKEN == "ВАШ_ТОКЕН_ЗДЕСЬ":
         return None
 
-    coords_str = ";".join([f"{p[1]},{p[0]}" for p in points])
+    coords = ";".join([f"{p[1]},{p[0]}" for p in points])
 
-    url = f"https://api.mapbox.com/directions/v5/mapbox/driving-traffic/{coords_str}"
+    url = f"https://api.mapbox.com/directions/v5/mapbox/driving/{coords}"
 
     params = {
         "access_token": MAPBOX_TOKEN,
-        "geometries": "geojson",
-        "overview": "full"
+        "geometries": "geojson"
     }
 
     try:
 
         r = requests.get(url, params=params)
+
         data = r.json()
 
         if "routes" in data:
@@ -97,15 +96,17 @@ if btn_calc:
 
         start_res = get_coordinates(start_addr)
 
-        if start_res:
+        if not start_res:
+            st.error("Не найден стартовый адрес")
+        else:
 
             points_list = []
 
             addresses = dest_raw.split(";")
 
-            for i, a in enumerate(addresses):
+            for i, addr in enumerate(addresses):
 
-                coords = get_coordinates(a.strip())
+                coords = get_coordinates(addr.strip())
 
                 if coords:
 
@@ -118,111 +119,104 @@ if btn_calc:
                         "close": close_time
                     })
 
-           ordered = []
-temp_pts = points_list[:]
+            current_pos = (start_res[0], start_res[1])
 
-current_pos = (start_res[0], start_res[1])
+            current_time = datetime.now().hour
 
-current_time = datetime.now().hour
-speed = 40
+            speed = 40
 
-while temp_pts:
+            ordered = []
 
-    candidates = []
+            temp_pts = points_list[:]
 
-    for p in temp_pts:
+            while temp_pts:
 
-        dist = geodesic(
-            current_pos,
-            (p["lat"], p["lon"])
-        ).km
+                candidates = []
 
-        travel_time = dist / speed
+                for p in temp_pts:
 
-        arrival = current_time + travel_time
+                    dist = geodesic(
+                        current_pos,
+                        (p["lat"], p["lon"])
+                    ).km
 
-        # если успеваем
-        if arrival <= p["close"]:
-            candidates.append((p, dist))
+                    travel_time = dist / speed
 
-    # если есть доступные точки
-    if candidates:
+                    arrival = current_time + travel_time
 
-        next_pt = min(candidates, key=lambda x: x[1])[0]
+                    if arrival <= p["close"]:
+                        candidates.append((p, dist))
 
-    else:
-        # если ни в одну не успеваем — берем ближайшую
-        next_pt = min(
-            temp_pts,
-            key=lambda x: geodesic(
-                current_pos,
-                (x["lat"], x["lon"])
-            ).km
-        )
+                if candidates:
 
-    ordered.append(next_pt)
+                    next_pt = min(candidates, key=lambda x: x[1])[0]
 
-    dist = geodesic(
-        current_pos,
-        (next_pt["lat"], next_pt["lon"])
-    ).km
+                else:
 
-    travel_time = dist / speed
+                    next_pt = min(
+                        temp_pts,
+                        key=lambda x: geodesic(
+                            current_pos,
+                            (x["lat"], x["lon"])
+                        ).km
+                    )
 
-    current_time += travel_time
+                ordered.append(next_pt)
 
-    current_pos = (next_pt["lat"], next_pt["lon"])
+                dist = geodesic(
+                    current_pos,
+                    (next_pt["lat"], next_pt["lon"])
+                ).km
 
-    temp_pts.remove(next_pt)
+                current_time += dist / speed
 
-# ---------------- ОТРИСОВКА КАРТЫ ----------------
+                current_pos = (next_pt["lat"], next_pt["lon"])
+
+                temp_pts.remove(next_pt)
+
+            st.session_state.route_data = {
+                "start": start_res,
+                "ordered_stops": ordered
+            }
+
+# ---------------- КАРТА ----------------
 
 if st.session_state.route_data:
 
     data = st.session_state.route_data
 
-    s_lat, s_lon, s_full_name = data["start"]
+    s_lat, s_lon, s_full = data["start"]
 
     stops = data["ordered_stops"]
 
-    all_coords = [(s_lat, s_lon)] + [(p["lat"], p["lon"]) for p in stops] + [(s_lat, s_lon)]
+    coords = [(s_lat, s_lon)] + [(p["lat"], p["lon"]) for p in stops]
 
-    road_geometry = get_mapbox_route(all_coords)
+    route = get_mapbox_route(coords)
 
     m = folium.Map(location=[s_lat, s_lon], zoom_start=12)
 
-    folium.TileLayer(
-        tiles="https://{s}.google.com/vt/lyrs=m@221097413,traffic&x={x}&y={y}&z={z}",
-        attr="Google Traffic",
-        name="Пробки",
-        overlay=True,
-        subdomains=["mt0","mt1","mt2","mt3"]
-    ).add_to(m)
+    if route:
 
-    if road_geometry:
-
-        path = [[p[1], p[0]] for p in road_geometry]
+        path = [[p[1], p[0]] for p in route]
 
         folium.PolyLine(
             path,
-            color="#FF0000",
-            weight=6,
-            opacity=0.8
+            color="red",
+            weight=6
         ).add_to(m)
 
     else:
 
         folium.PolyLine(
-            all_coords,
+            coords,
             color="blue",
-            weight=3,
-            dash_array="10"
+            weight=4
         ).add_to(m)
 
     folium.Marker(
         [s_lat, s_lon],
-        tooltip="СТАРТ / ФИНИШ",
-        icon=folium.Icon(color="red", icon="home")
+        tooltip="СТАРТ",
+        icon=folium.Icon(color="red")
     ).add_to(m)
 
     for i, p in enumerate(stops, 1):
@@ -243,31 +237,34 @@ if st.session_state.route_data:
 
     google_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={origin}&waypoints={waypoints}&travelmode=driving"
 
-    st.markdown(f"""
-    <a href="{google_url}" style="text-decoration: none;">
-    <div style="
-    background-color:#28a745;
-    color:white;
-    padding:20px;
-    text-align:center;
-    border-radius:15px;
-    font-size:22px;
-    font-weight:bold;
-    cursor:pointer;">
-    🚀 ЗАПУСТИТЬ НАВИГАТОР
-    </div>
-    </a>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <a href="{google_url}" target="_blank" style="text-decoration:none;">
+        <div style="
+        background-color:#28a745;
+        color:white;
+        padding:20px;
+        text-align:center;
+        border-radius:15px;
+        font-size:22px;
+        font-weight:bold;">
+        🚀 ЗАПУСТИТЬ НАВИГАТОР
+        </div>
+        </a>
+        """,
+        unsafe_allow_html=True
+    )
 
-# ---------------- ТЕКСТ МАРШРУТА ----------------
+# ---------------- СПИСОК МАРШРУТА ----------------
 
     with st.expander("Посмотреть план маршрута"):
 
-        st.write(f"🚩 **Старт:** {s_full_name}")
+        st.write(f"🚩 **Старт:** {s_full}")
 
         for i, p in enumerate(stops, 1):
             st.write(f"{i}. {p['name']} (до {p['close']}:00)")
 
-        st.write(f"🏁 **Возврат:** {s_full_name}")
+        st.write(f"🏁 **Финиш:** {s_full}")
+
 
 

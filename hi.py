@@ -38,7 +38,6 @@ def get_coordinates(address):
 with st.sidebar:
     st.header("📍 Маршрут")
 
-    # Ввод старта с ограниченными подсказками
     start_query = st.text_input("Введите старт")
     suggestions = address_search(start_query) if start_query else []
     start_addr = st.selectbox("Выберите адрес", suggestions) if suggestions else start_query
@@ -69,7 +68,7 @@ def parse_points(text):
         points.append((addr.strip(), close))
     return points
 
-# ---------------- ОПТИМИЗАЦИЯ МАРШРУТА ----------------
+# ---------------- УМНАЯ ОПТИМИЗАЦИЯ МАРШРУТА ----------------
 def optimize_route(start, points):
     speed = 40  # км/ч
     now = datetime.now()
@@ -79,19 +78,30 @@ def optimize_route(start, points):
 
     while temp:
         best = None
-        best_dist = None
+        best_score = None
+
         for p in temp:
             dist = geodesic(current_pos, (p["lat"], p["lon"])).km
             travel_hours = dist / speed
             arrival = now + timedelta(hours=travel_hours)
-            if p["close"] and arrival.hour >= p["close"]:
-                continue
-            if best_dist is None or dist < best_dist:
+
+            # оставшееся время до закрытия
+            if p["close"]:
+                remaining = p["close"] - arrival.hour - arrival.minute / 60
+                if remaining < 0:
+                    continue  # точка уже недоступна
+            else:
+                remaining = float("inf")  # нет ограничения
+
+            # оценка приоритета: меньше score → важнее
+            score = travel_hours / remaining
+
+            if best_score is None or score < best_score:
                 best = p
-                best_dist = dist
+                best_score = score
 
         if not best:
-            best = temp[0]
+            best = temp[0]  # если все точки недоступны, берём любую
 
         ordered.append(best)
         dist = geodesic(current_pos, (best["lat"], best["lon"])).km
@@ -181,4 +191,3 @@ if st.session_state.route_data:
                 text += f" (до {p['close']}:00)"
             st.write(f"{i}. {text}")
         st.write("🏁 Возврат к старту")
-

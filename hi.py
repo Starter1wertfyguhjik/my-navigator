@@ -137,21 +137,20 @@ if st.session_state.route_data:
     # ВЫВОД КАРТЫ
     st_folium(m, width="100%", height=500, key="nav_map")
 
-    # 5. Кнопка для телефона
+        # 5. Кнопка для запуска (Прямой протокол навигации)
     origin = f"{s_lat},{s_lon}"
     waypoints = "|".join([f"{p['lat']},{p['lon']}" for p in stops])
-    
-    # ПРЯМАЯ ССЫЛКА (Intent)
-    # Попробуй этот формат, он самый "пробивной" для Android
-    google_url = f"google.navigation:q={origin}&waypoints={waypoints}"
+
+    # Прямая ссылка-команда для Android (без http)
+    nav_url = f"google.navigation:q={origin}&waypoints={waypoints}"
 
     st.markdown(f"""
-        <a href="{google_url}">
-            <div style="background-color:#28a745; color:white; padding:15px; text-align:center; border-radius:10px; font-size:20px; font-weight:bold;">
-                🚀 ОТКРЫТЬ В НАВИГАТОРЕ
-            </div>
-        </a>
-    """, unsafe_allow_html=True)
+            <a href="{nav_url}">
+                <div style="background-color:#28a745; color:white; padding:15px; text-align:center; border-radius:10px; font-size:20px; font-weight:bold; cursor:pointer;">
+                    🚀 ОТКРЫТЬ В НАВИГАТОРЕ
+                </div>
+            </a>
+        """, unsafe_allow_html=True)
 
     # Список остановок текстом
     with st.expander("Посмотреть текстовый план маршрута"):
@@ -160,3 +159,4 @@ if st.session_state.route_data:
             st.write(f"{i}. {p['name']}")
 
         st.write(f"🏁 **Возврат:** {s_full_name}")
+

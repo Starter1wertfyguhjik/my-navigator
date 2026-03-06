@@ -1,12 +1,10 @@
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
+from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 import requests
 from datetime import datetime, timedelta
-
-MAPBOX_TOKEN = ""  # если используешь Mapbox
-GOOGLE_API_KEY = "ВАШ_GOOGLE_API_KEY"  # вставь свой ключ
 
 st.set_page_config(page_title="Smart Navigator", layout="wide")
 
@@ -15,39 +13,34 @@ if "route_data" not in st.session_state:
 
 st.title("🚗 Умный Навигатор")
 
-# ---------------- GOOGLE AUTOCOMPLETE ----------------
-def google_autocomplete(query, api_key):
-    url = "https://maps.googleapis.com/maps/api/place/autocomplete/json"
-    params = {
-        "input": query,
-        "types": "address",
-        "key": api_key,
-        "language": "ru"
-    }
+# ---------------- ФУНКЦИЯ ПОДСКАЗОК ----------------
+def address_search(query):
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {"q": query, "format": "json", "limit": 5}
     try:
         r = requests.get(url, params=params)
-        results = r.json().get("predictions", [])
-        return [x["description"] for x in results]
+        data = r.json()
+        return [x["display_name"] for x in data]
     except:
         return []
 
-def geocode_google(address, api_key):
-    url = "https://maps.googleapis.com/maps/api/geocode/json"
-    params = {"address": address, "key": api_key, "language": "ru"}
-    r = requests.get(url, params=params)
-    data = r.json()
-    if "results" in data and len(data["results"]) > 0:
-        loc = data["results"][0]["geometry"]["location"]
-        return loc["lat"], loc["lng"], data["results"][0]["formatted_address"]
+def get_coordinates(address):
+    try:
+        geolocator = Nominatim(user_agent="smart_nav")
+        loc = geolocator.geocode(address)
+        if loc:
+            return loc.latitude, loc.longitude, loc.address
+    except:
+        return None
     return None
 
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
     st.header("📍 Маршрут")
 
+    # Ввод старта с ограниченными подсказками
     start_query = st.text_input("Введите старт")
-    suggestions = google_autocomplete(start_query, GOOGLE_API_KEY) if start_query else []
-    
+    suggestions = address_search(start_query) if start_query else []
     start_addr = st.selectbox("Выберите адрес", suggestions) if suggestions else start_query
 
     dest_raw = st.text_area(
@@ -110,14 +103,14 @@ def optimize_route(start, points):
 
 # ---------------- ПОСТРОЕНИЕ МАРШРУТА ----------------
 if btn_calc:
-    start_coords = geocode_google(start_addr, GOOGLE_API_KEY)
+    start_coords = get_coordinates(start_addr)
     if not start_coords:
         st.error("Не найден старт")
     else:
         parsed = parse_points(dest_raw)
         points = []
         for addr, close in parsed:
-            coords = geocode_google(addr, GOOGLE_API_KEY)
+            coords = get_coordinates(addr)
             if coords:
                 points.append({
                     "lat": coords[0],
@@ -143,7 +136,6 @@ if st.session_state.route_data:
     coords.append((s_lat, s_lon))  # возврат к старту
 
     m = folium.Map(location=[s_lat, s_lon], zoom_start=12)
-
     folium.PolyLine(coords, color="blue", weight=4).add_to(m)
 
     folium.Marker([s_lat, s_lon], tooltip="СТАРТ / ФИНИШ", icon=folium.Icon(color="red")).add_to(m)

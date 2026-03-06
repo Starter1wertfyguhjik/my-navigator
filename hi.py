@@ -179,31 +179,32 @@ if st.session_state.route_data:
 
     st_folium(m, width="100%", height=500)
 
-    # ---------- ссылка навигатора ----------
+  # ---------- ссылка навигатора ----------
 
-   origin = f"{s_lat},{s_lon}"
+    origin = f"{s_lat},{s_lon}"
 
-if stops:
-    waypoints = "|".join([f"{p['lat']},{p['lon']}" for p in stops])
-    google_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={origin}&waypoints={waypoints}&travelmode=driving"
-else:
-    google_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={origin}&travelmode=driving"
+    if stops:
+        waypoints = "|".join([f"{p['lat']},{p['lon']}" for p in stops])
+        google_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={origin}&waypoints={waypoints}&travelmode=driving"
+    else:
+        google_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={origin}&travelmode=driving"
 
-st.markdown(f"""
-<a href="{google_url}">
-<div style="
-background-color:#28a745;
-color:white;
-padding:20px;
-text-align:center;
-border-radius:15px;
-font-size:22px;
-font-weight:bold;
-cursor:pointer;">
-🚀 ЗАПУСТИТЬ НАВИГАТОР
-</div>
-</a>
-""", unsafe_allow_html=True)
+    st.markdown(f"""
+    <a href="{google_url}">
+    <div style="
+    background-color:#28a745;
+    color:white;
+    padding:20px;
+    text-align:center;
+    border-radius:15px;
+    font-size:22px;
+    font-weight:bold;
+    cursor:pointer;">
+    🚀 ЗАПУСТИТЬ НАВИГАТОР
+    </div>
+    </a>
+    """, unsafe_allow_html=True)
+
 
 
 

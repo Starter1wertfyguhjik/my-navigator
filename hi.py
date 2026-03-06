@@ -71,7 +71,7 @@ def parse_points(text):
 # ---------------- УМНАЯ ОПТИМИЗАЦИЯ МАРШРУТА ----------------
 def optimize_route(start, points):
     speed = 40  # км/ч
-    now = datetime.now()  # текущее время устройства
+    now = datetime.now()
     current_pos = start
     ordered = []
     temp = points[:]
@@ -86,22 +86,22 @@ def optimize_route(start, points):
             arrival = now + timedelta(hours=travel_hours)
 
             if p["close"]:
-                # Время закрытия точки в этот день
+                # время закрытия точки
                 close_time = arrival.replace(hour=p["close"], minute=0, second=0, microsecond=0)
                 remaining = (close_time - arrival).total_seconds() / 3600
                 if remaining < 0:
                     continue  # точка уже недоступна
+                score = travel_hours / remaining  # меньше → выше приоритет
             else:
-                remaining = float("inf")
-
-            score = travel_hours / remaining  # меньше score → выше приоритет
+                # точки без времени учитываем по расстоянию, идут после срочных
+                score = dist / 1000
 
             if best_score is None or score < best_score:
                 best = p
                 best_score = score
 
         if not best:
-            best = temp[0]  # если все недоступны, берём любую
+            best = temp[0]
 
         ordered.append(best)
         dist = geodesic(current_pos, (best["lat"], best["lon"])).km

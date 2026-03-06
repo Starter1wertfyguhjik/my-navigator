@@ -1,193 +1,221 @@
 import streamlit as st
-import folium
-from streamlit_folium import st_folium
-from geopy.geocoders import Nominatim
-from geopy.distance import geodesic
 import requests
+import pandas as pd
+import pydeck as pdk
 
-MAPBOX_TOKEN = "ВАШ_ТОКЕН_ЗДЕСЬ"
+# ==========================
+# НАСТРОЙКИ
+# ==========================
 
-st.set_page_config(page_title="Pro Navigator v2.0", layout="wide")
+MAPBOX_TOKEN = "ВАШ_MAPBOX_TOKEN"
 
-if 'route_data' not in st.session_state:
-    st.session_state.route_data = None
+st.set_page_config(page_title="Маршрутный планировщик", layout="wide")
 
-st.title("🚗 Умный Навигатор")
+st.title("🚗 Планировщик маршрута")
 
-with st.sidebar:
-    st.header("📍 Маршрут")
+# ==========================
+# ФУНКЦИЯ ПОДСКАЗОК АДРЕСА
+# ==========================
 
-    start_addr = st.text_input(
-        "Ваш адрес (Старт/Финиш)",
-        "Москва, Красная площадь"
-    )
+def get_address_suggestions(query):
 
-    dest_raw = st.text_area(
-        "Точки через ;",
-        "Москва, Тверская 1; Москва, Новый Арбат 10; Москва, ВДНХ"
-    )
-
-    btn_calc = st.button("🗺️ Построить маршрут")
-
-
-# ---------- функции ----------
-
-def get_coordinates(address):
-
-    try:
-        geolocator = Nominatim(user_agent="nav_app")
-        loc = geolocator.geocode(address)
-
-        if loc:
-            return (loc.latitude, loc.longitude, loc.address)
-
-    except:
-        pass
-
-    return None
-
-
-def get_mapbox_route(points):
-
-    if MAPBOX_TOKEN == "ВАШ_ТОКЕН_ЗДЕСЬ":
-        return None
-
-    coords = ";".join([f"{p[1]},{p[0]}" for p in points])
-
-    url = f"https://api.mapbox.com/directions/v5/mapbox/driving-traffic/{coords}"
+    url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{query}.json"
 
     params = {
         "access_token": MAPBOX_TOKEN,
-        "geometries": "geojson",
-        "overview": "full"
+        "autocomplete": "true",
+        "limit": 5
     }
 
-    try:
+    r = requests.get(url, params=params)
+    data = r.json()
 
-        r = requests.get(url, params=params)
-        data = r.json()
+    suggestions = []
 
-        if "routes" in data:
-            return data["routes"][0]["geometry"]["coordinates"]
+    for feature in data["features"]:
+        suggestions.append(feature["place_name"])
 
-    except:
-        pass
-
-    return None
+    return suggestions
 
 
-# ---------- расчет ----------
+# ==========================
+# ПОЛУЧЕНИЕ КООРДИНАТ
+# ==========================
 
-if btn_calc:
+def geocode(address):
 
-    start = get_coordinates(start_addr)
+    url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{address}.json"
 
-    if start:
+    params = {
+        "access_token": MAPBOX_TOKEN,
+        "limit": 1
+    }
 
-        points = []
+    r = requests.get(url, params=params)
+    data = r.json()
 
-        for a in dest_raw.split(";"):
+    if len(data["features"]) > 0:
 
-            coords = get_coordinates(a.strip())
+        coords = data["features"][0]["center"]
 
-            if coords:
-                points.append({
-                    "lat": coords[0],
-                    "lon": coords[1],
-                    "name": coords[2]
-                })
+        return coords[1], coords[0]
 
-        current = (start[0], start[1])
-
-        ordered = []
-        temp = points[:]
-
-        while temp:
-
-            next_pt = min(
-                temp,
-                key=lambda x: geodesic(
-                    current,
-                    (x['lat'], x['lon'])
-                ).km
-            )
-
-            ordered.append(next_pt)
-
-            current = (next_pt['lat'], next_pt['lon'])
-
-            temp.remove(next_pt)
-
-        st.session_state.route_data = {
-            "start": start,
-            "ordered_stops": ordered
-        }
-
-    else:
-        st.error("Не найден стартовый адрес")
+    return None, None
 
 
-# ---------- карта ----------
+# ==========================
+# АЛГОРИТМ ПЛАНИРОВАНИЯ
+# ==========================
 
-if st.session_state.route_data:
+def schedule_locations(locations, start_time=8):
 
-    data = st.session_state.route_data
+    current_time = start_time
+    ordered = []
 
-    s_lat, s_lon, s_name = data["start"]
+    for loc in sorted(locations, key=lambda x: x["open"]):
 
-    stops = data["ordered_stops"]
+        if current_time < loc["open"]:
+            current_time = loc["open"]
 
-    all_coords = [(s_lat, s_lon)] + \
-        [(p['lat'], p['lon']) for p in stops] + \
-        [(s_lat, s_lon)]
+        if current_time + loc["duration"] <= loc["close"]:
+            ordered.append(loc)
+            current_time += loc["duration"]
 
-    road = get_mapbox_route(all_coords)
+    return ordered
 
-    m = folium.Map(
-        location=[s_lat, s_lon],
-        zoom_start=12
+
+# ==========================
+# ХРАНИЛИЩЕ ТОЧЕК
+# ==========================
+
+if "locations" not in st.session_state:
+    st.session_state.locations = []
+
+# ==========================
+# ДОБАВЛЕНИЕ АДРЕСА
+# ==========================
+
+st.subheader("Добавить точку")
+
+query = st.text_input("Введите адрес")
+
+selected_address = None
+
+if query:
+
+    suggestions = get_address_suggestions(query)
+
+    if suggestions:
+        selected_address = st.selectbox(
+            "Выберите адрес",
+            suggestions
+        )
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    open_time = st.number_input("Открытие", 0, 23, 9)
+
+with col2:
+    close_time = st.number_input("Закрытие", 0, 23, 18)
+
+with col3:
+    duration = st.number_input("Длительность визита (часы)", 1, 8, 1)
+
+if st.button("Добавить точку"):
+
+    if selected_address:
+
+        lat, lon = geocode(selected_address)
+
+        st.session_state.locations.append({
+
+            "address": selected_address,
+            "lat": lat,
+            "lon": lon,
+            "open": open_time,
+            "close": close_time,
+            "duration": duration
+        })
+
+# ==========================
+# СПИСОК ТОЧЕК
+# ==========================
+
+st.subheader("Точки маршрута")
+
+if st.session_state.locations:
+
+    df = pd.DataFrame(st.session_state.locations)
+
+    st.dataframe(df)
+
+# ==========================
+# ПЛАНИРОВАНИЕ
+# ==========================
+
+if st.button("Оптимизировать по времени"):
+
+    ordered = schedule_locations(st.session_state.locations)
+
+    st.session_state.locations = ordered
+
+    st.success("Маршрут упорядочен!")
+
+# ==========================
+# КАРТА
+# ==========================
+
+if st.session_state.locations:
+
+    df = pd.DataFrame(st.session_state.locations)
+
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=df,
+        get_position="[lon, lat]",
+        get_radius=120,
+        pickable=True
     )
 
-    if road:
+    view = pdk.ViewState(
+        latitude=df["lat"].mean(),
+        longitude=df["lon"].mean(),
+        zoom=10
+    )
 
-        path = [[p[1], p[0]] for p in road]
+    deck = pdk.Deck(
+        layers=[layer],
+        initial_view_state=view,
+        map_style="mapbox://styles/mapbox/streets-v11",
+        mapbox_key=MAPBOX_TOKEN
+    )
 
-        folium.PolyLine(
-            path,
-            color="red",
-            weight=6
-        ).add_to(m)
+    st.pydeck_chart(deck)
 
-    else:
+# ==========================
+# GOOGLE MAPS
+# ==========================
 
-        folium.PolyLine(
-            all_coords,
-            color="blue"
-        ).add_to(m)
+if len(st.session_state.locations) >= 2:
 
-    folium.Marker(
-        [s_lat, s_lon],
-        tooltip="СТАРТ"
-    ).add_to(m)
+    addresses = [loc["address"] for loc in st.session_state.locations]
 
-    for i, p in enumerate(stops, 1):
+    origin = addresses[0]
+    destination = addresses[-1]
 
-        folium.Marker(
-            [p['lat'], p['lon']],
-            tooltip=f"{i}. {p['name']}"
-        ).add_to(m)
+    waypoints = "|".join(addresses[1:-1])
 
-    st_folium(m, width="100%", height=500)
-
-    # ---------- ссылка навигатора ----------
-
-    origin = f"{s_lat},{s_lon}"
-    waypoints = "|".join([f"{p['lat']},{p['lon']}" for p in stops])
-
-    google_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={origin}&waypoints={waypoints}&travelmode=driving"
+    google_url = f"""
+    https://www.google.com/maps/dir/?api=1
+    &origin={origin}
+    &destination={destination}
+    &waypoints={waypoints}
+    &travelmode=driving
+    """
 
     st.markdown(f"""
-    <a href="{google_url}" target="_blank" style="text-decoration:none;">
+    <a href="{google_url}" style="text-decoration:none;">
     <div style="
     background-color:#28a745;
     color:white;
@@ -195,16 +223,10 @@ if st.session_state.route_data:
     text-align:center;
     border-radius:15px;
     font-size:22px;
-    font-weight:bold;
-    cursor:pointer;">
+    font-weight:bold;">
     🚀 ЗАПУСТИТЬ НАВИГАТОР
     </div>
     </a>
     """, unsafe_allow_html=True)
-
-
-
-
-
 
 

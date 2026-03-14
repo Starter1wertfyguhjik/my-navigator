@@ -215,4 +215,3 @@ if st.session_state.route_data:
             time_tag = f" — 🕒 до {p['close']}:00" if p["close"] else ""
             st.write(f"{i}. {p['name']}{time_tag}")
         st.write(f"🏁 **Возврат:** {s_name}")
-

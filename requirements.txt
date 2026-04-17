@@ -1,8 +1,7 @@
 streamlit
-folium
+streamlit-searchbox
 streamlit-folium
+folium
 geopy
 requests
-streamlit-searchbox
 pytz
-geopy

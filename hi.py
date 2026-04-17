@@ -84,33 +84,18 @@ with st.sidebar:
     st.header("📍 Настройка маршрута")
 
     st.write("**Откуда едем?**")
-    start_addr = st_searchbox(
-        address_search_provider,
-        key="start_search",
-        placeholder="Начните вводить адрес старта...",
-        default="Москва, Красная площадь"
-    )
+    start_addr = st_searchbox(address_search_provider, key="start_search", placeholder="Введите адрес старта...")
 
     st.markdown("---")
-    
     st.write("**Добавить точку назначения:**")
-    new_point_addr = st_searchbox(
-        address_search_provider,
-        key="point_search",
-        placeholder="Поиск адреса точки..."
-    )
+    new_point_addr = st_searchbox(address_search_provider, key="point_search", placeholder="Поиск адреса...")
     
-    # ВВОД ДИАПАЗОНА ВРЕМЕНИ
-    st.write("🕒 Время работы точки:")
     col_time1, col_time2 = st.columns(2)
-    with col_time1:
-        open_h = st.number_input("Открытие", 0, 23, 9)
-    with col_time2:
-        close_h = st.number_input("Закрытие", 0, 23, 21)
+    with col_time1: open_h = st.number_input("Открытие", 0, 23, 9)
+    with col_time2: close_h = st.number_input("Закрытие", 0, 23, 21)
     
-   if st.button("➕ Добавить в список"):
+    if st.button("➕ Добавить в список"):
         if new_point_addr:
-            # new_point_addr теперь содержит lat и lon из поиска!
             st.session_state.points_list.append({
                 "addr": new_point_addr["name"],
                 "lat": new_point_addr["lat"],
@@ -119,19 +104,18 @@ with st.sidebar:
                 "close": close_h
             })
             st.toast("Точка добавлена")
+        else:
+            st.warning("Сначала выберите адрес из списка!")
 
     if st.session_state.points_list:
         st.write("**Ваш список:**")
         for i, p in enumerate(st.session_state.points_list):
-            st.caption(f"{i+1}. {p['addr'][:30]}... ({p['open']}:00 - {p['close']}:00)")
-        
-        if st.button("🗑 Очистить все"):
+            st.caption(f"{i+1}. {p['addr']} ({p['open']}:00 - {p['close']}:00)")
+        if st.button("🗑 Очистить всё"):
             st.session_state.points_list = []
             st.rerun()
 
-    st.markdown("---")
     btn_calc = st.button("🚀 ПОСТРОИТЬ МАРШРУТ", use_container_width=True)
-
 # ---------------- УМНАЯ ОПТИМИЗАЦИЯ С УЧЕТОМ ДОРОГ И ОКНА РАБОТЫ ----------------
 def optimize_route(start, points_list):
     tz_moscow = pytz.timezone('Europe/Moscow')

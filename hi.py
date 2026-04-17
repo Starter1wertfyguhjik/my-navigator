@@ -1,247 +1,170 @@
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
-from geopy.geocoders import Nominatim
-from geopy.distance import geodesic
 import requests
 from datetime import datetime, timedelta
 import pytz
-from streamlit_searchbox import st_searchbox
+import time
 
+# --- НАСТРОЙКИ ---
 st.set_page_config(page_title="Smart Navigator MSK", layout="wide")
 
+# Инициализация состояний, чтобы данные не пропадали при обновлении страницы
 if "points_list" not in st.session_state:
     st.session_state.points_list = []
 if "route_data" not in st.session_state:
     st.session_state.route_data = None
+if "start_point" not in st.session_state:
+    st.session_state.start_point = None
 
-st.title("🚗 Умный Навигатор (Режим работы + Дороги)")
+st.title("🚗 Умный Навигатор (Стабильная версия)")
 
-# ---------------- ФУНКЦИЯ ПОИСКА ----------------
-@st.cache_data(ttl=3600)
-def address_search_provider(search_term: str):
-    if not search_term or len(search_term) < 3: # Снизили до 3 символов
-        return []
-    
-    # Используем Photon API - он разрешает живой поиск
+# --- ФУНКЦИЯ ГЕОКОДИНГА (ПОИСК) ---
+def fetch_location(query):
+    """Ищет координаты через Photon API (OpenStreetMap)"""
+    if not query or len(query) < 3:
+        return None
     url = "https://photon.komoot.io/api/"
-    params = {"q": search_term, "limit": 10, "lang": "ru"}
-    
+    params = {"q": query, "limit": 1, "lang": "ru"}
     try:
         r = requests.get(url, params=params, timeout=5)
-        if r.status_code == 200:
-            features = r.json().get("features", [])
-            results = []
-            for f in features:
-                p = f.get("properties", {})
-                c = f.get("geometry", {}).get("coordinates") # [lon, lat]
-                
-                # Формируем красивое имя
-                name = ", ".join(filter(None, [p.get("city"), p.get("street"), p.get("housenumber")])) or p.get("name", "???")
-                
-                # Возвращаем данные: (Текст для списка, Данные для кода)
-                results.append((name, {"lat": c[1], "lon": c[0], "name": name}))
-            return results
-    except:
-        pass
-    return []
-
-# ---------------- КЭШИРОВАННЫЙ ГЕОКОДЕР ----------------
-@st.cache_data
-def get_coordinates_cached(address):
-    try:
-        geolocator = Nominatim(user_agent="smart_nav_full_2026")
-        loc = geolocator.geocode(address, timeout=10)
-        if loc:
-            return loc.latitude, loc.longitude, loc.address
-    except:
-        pass
+        features = r.json().get("features", [])
+        if features:
+            f = features[0]
+            p = f["properties"]
+            c = f["geometry"]["coordinates"]
+            # Собираем понятный адрес
+            name = ", ".join(filter(None, [p.get("city"), p.get("street"), p.get("housenumber")])) or p.get("name", "Неизвестное место")
+            return {"lat": c[1], "lon": c[0], "name": name}
+    except Exception as e:
+        st.error(f"Ошибка поиска: {e}")
     return None
 
-# ---------------- ЗАПРОС РЕАЛЬНЫХ ДОРОГ (OSRM) ----------------
-def get_osrm_route(start_coords, end_coords):
-    """
-    Запрашивает реальное расстояние по дорогам и время в пути у бесплатного OSRM API.
-    Координаты передаются в формате (lat, lon). OSRM ожидает lon, lat.
-    """
-    url = f"http://router.project-osrm.org/route/v1/driving/{start_coords[1]},{start_coords[0]};{end_coords[1]},{end_coords[0]}?overview=false"
+# --- ЗАПРОС ДОРОГ (OSRM) ---
+def get_osrm_route(start, end):
+    url = f"http://router.project-osrm.org/route/v1/driving/{start[1]},{start[0]};{end[1]},{end[0]}?overview=false"
     try:
         r = requests.get(url, timeout=3)
         data = r.json()
         if data.get("code") == "Ok":
-            dist_km = data["routes"][0]["distance"] / 1000.0
-            duration_sec = data["routes"][0]["duration"]
-            return dist_km, duration_sec / 3600.0  # возвращаем км и часы
-    except Exception:
+            return data["routes"][0]["distance"] / 1000.0, data["routes"][0]["duration"] / 3600.0
+    except:
         pass
-    
-    # Фолбэк (если OSRM недоступен): считаем по прямой + скорость 30 км/ч
-    dist_km = geodesic(start_coords, end_coords).km
-    return dist_km, dist_km / 30.0
+    return 0, 0.5 # Заглушка: 30 минут пути
 
-# ---------------- SIDEBAR ----------------
+# --- БОКОВАЯ ПАНЕЛЬ (ИНТЕРФЕЙС) ---
 with st.sidebar:
-    st.header("📍 Настройка маршрута")
-
-    st.write("**Откуда едем?**")
-    start_addr = st_searchbox(address_search_provider, key="start_search", placeholder="Введите адрес старта...")
+    st.header("📍 Маршрут")
+    
+    # СЕКЦИЯ СТАРТА
+    st.subheader("1. Откуда выезжаем?")
+    start_input = st.text_input("Введите город, улицу", placeholder="Москва, Арбат...", key="input_start")
+    if st.button("🚩 Установить старт"):
+        res = fetch_location(start_input)
+        if res:
+            st.session_state.start_point = res
+            st.success(f"Выбрано: {res['name']}")
+        else:
+            st.error("Адрес не найден. Попробуйте уточнить.")
 
     st.markdown("---")
-    st.write("**Добавить точку назначения:**")
-    new_point_addr = st_searchbox(address_search_provider, key="point_search", placeholder="Поиск адреса...")
     
-    col_time1, col_time2 = st.columns(2)
-    with col_time1: open_h = st.number_input("Открытие", 0, 23, 9)
-    with col_time2: close_h = st.number_input("Закрытие", 0, 23, 21)
+    # СЕКЦИЯ ТОЧЕК
+    st.subheader("2. Куда заедем?")
+    point_input = st.text_input("Адрес остановки", placeholder="Тверская, 7...", key="input_point")
     
-    if st.button("➕ Добавить в список"):
-        if new_point_addr:
-            st.session_state.points_list.append({
-                "addr": new_point_addr["name"],
-                "lat": new_point_addr["lat"],
-                "lon": new_point_addr["lon"],
-                "open": open_h,
-                "close": close_h
-            })
-            st.toast("Точка добавлена")
+    c1, c2 = st.columns(2)
+    with c1: open_h = st.number_input("Открытие (час)", 0, 23, 9)
+    with c2: close_h = st.number_input("Закрытие (час)", 0, 23, 21)
+    
+    if st.button("➕ Добавить точку"):
+        if point_input:
+            res = fetch_location(point_input)
+            if res:
+                st.session_state.points_list.append({
+                    **res, "open": open_h, "close": close_h
+                })
+                st.toast(f"Добавлено: {res['name']}")
+            else:
+                st.error("Адрес точки не найден")
         else:
-            st.warning("Сначала выберите адрес из списка!")
+            st.warning("Введите адрес!")
 
+    # СПИСОК ДОБАВЛЕННЫХ
     if st.session_state.points_list:
         st.write("**Ваш список:**")
         for i, p in enumerate(st.session_state.points_list):
-            st.caption(f"{i+1}. {p['addr']} ({p['open']}:00 - {p['close']}:00)")
-        if st.button("🗑 Очистить всё"):
+            st.caption(f"{i+1}. {p['name']} ({p['open']}-{p['close']})")
+        
+        if st.button("🗑 Очистить список"):
             st.session_state.points_list = []
+            st.session_state.route_data = None
             st.rerun()
 
+    st.markdown("---")
     btn_calc = st.button("🚀 ПОСТРОИТЬ МАРШРУТ", use_container_width=True)
-# ---------------- УМНАЯ ОПТИМИЗАЦИЯ С УЧЕТОМ ДОРОГ И ОКНА РАБОТЫ ----------------
-def optimize_route(start, points_list):
-    tz_moscow = pytz.timezone('Europe/Moscow')
-    current_time = datetime.now(tz_moscow)
-    
-    current_pos = start
-    ordered = []
-    temp = points_list[:]
 
-    while temp:
-        best = None
-        min_score = float('inf')
-        best_travel_time = 0
-        
-        for p in temp:
-            # Считаем РЕАЛЬНОЕ время и расстояние по дорогам
-            dist, travel_hours = get_osrm_route(current_pos, (p["lat"], p["lon"]))
-            
-            arrival_time = current_time + timedelta(hours=travel_hours)
-            
-            open_time = arrival_time.replace(hour=p["open"], minute=0, second=0)
-            close_time = arrival_time.replace(hour=p["close"], minute=0, second=0)
-            
-            # ЛОГИКА ОЦЕНКИ (SCORE): Чем меньше очков, тем выгоднее ехать
-            # Базовая цена - это время в пути в минутах (расход топлива и времени)
-            score = travel_hours * 60 
-            
-            if arrival_time > close_time:
-                # Жесткий штраф за опоздание (точка закроется)
-                score += 10000 
-            elif arrival_time < open_time:
-                # Приехали раньше - ждем. Простой машины - это потеря времени, но топливо не тратится.
-                wait_minutes = (open_time - arrival_time).total_seconds() / 60
-                score += wait_minutes * 0.5  # Штраф за ожидание меньше, чем за езду
-            else:
-                # Попали в рабочее окно!
-                # Даем приоритет тем точкам, которые скоро закроются (чтобы успеть)
-                minutes_to_close = (close_time - arrival_time).total_seconds() / 60
-                if minutes_to_close < 60:
-                    score -= (60 - minutes_to_close)  # "Горящие" точки забираем быстрее
-            
-            # Ищем точку с минимальным "штрафом"
-            if score < min_score:
-                min_score = score
-                best = p
-                best_travel_time = travel_hours
-
-        # Фиксируем выбор
-        chosen = best
-        
-        # Обновляем время (добавляем время в пути)
-        current_time += timedelta(hours=best_travel_time)
-        
-        # Если приехали раньше открытия, стоим и ждем
-        open_dt = current_time.replace(hour=chosen["open"], minute=0, second=0)
-        if current_time < open_dt:
-            current_time = open_dt
-            
-        current_pos = (chosen["lat"], chosen["lon"])
-        ordered.append(chosen)
-        temp.remove(chosen)
-
-    return ordered, datetime.now(tz_moscow).strftime("%H:%M")
-
-# ---------------- ЛОГИКА РАСЧЕТА ----------------
+# --- ЛОГИКА ОПТИМИЗАЦИИ ---
 if btn_calc:
-    if not start_addr or not st.session_state.points_list:
-        st.error("Заполните старт и добавьте точки!")
+    if not st.session_state.start_point or not st.session_state.points_list:
+        st.error("Нужен адрес старта и хотя бы одна точка!")
     else:
-        with st.spinner("Рассчитываем маршрут по реальным дорогам..."):
-            # ВАЖНО: Мы больше не вызываем get_coordinates_cached!
-            # Данные берутся напрямую из объектов поиска.
-            
-            try:
-                s_lat = start_addr["lat"]
-                s_lon = start_addr["lon"]
-                s_name = start_addr["name"]
-                
-                # Запускаем оптимизацию. points_list уже содержит координаты.
-                ordered, msk_time = optimize_route((s_lat, s_lon), st.session_state.points_list)
-                
-                # Сохраняем результат для отрисовки карты
-                st.session_state.route_data = {
-                    "start": (s_lat, s_lon, s_name),
-                    "stops": ordered,
-                    "msk_start_time": msk_time
-                }
-            except Exception as e:
-                st.error(f"Ошибка при обработке координат: {e}")
+        with st.spinner("Считаем лучший путь..."):
+            def optimize(start, pts):
+                tz = pytz.timezone('Europe/Moscow')
+                curr_time = datetime.now(tz)
+                curr_pos = (start['lat'], start['lon'])
+                ordered = []
+                temp = pts[:]
+                while temp:
+                    best_p, min_score, travel_h = None, float('inf'), 0
+                    for p in temp:
+                        _, h = get_osrm_route(curr_pos, (p['lat'], p['lon']))
+                        arr_h = (curr_time + timedelta(hours=h)).hour
+                        score = h * 60
+                        if arr_h >= p['close']: score += 10000 # Опоздали
+                        elif arr_h < p['open']: score += (p['open'] - arr_h) * 20 # Ждем открытия
+                        if score < min_score:
+                            min_score, best_p, travel_h = score, p, h
+                    
+                    curr_time += timedelta(hours=travel_h)
+                    if curr_time.hour < best_p['open']:
+                        curr_time = curr_time.replace(hour=best_p['open'], minute=0)
+                    curr_pos = (best_p['lat'], best_p['lon'])
+                    ordered.append(best_p)
+                    temp.remove(best_p)
+                return ordered, datetime.now(tz).strftime("%H:%M")
 
-# ---------------- ВЫВОД ----------------
+            res_ordered, res_time = optimize(st.session_state.start_point, st.session_state.points_list)
+            st.session_state.route_data = {"stops": res_ordered, "time": res_time}
+
+# --- КАРТА И РЕЗУЛЬТАТЫ ---
 if st.session_state.route_data:
-    data = st.session_state.route_data
-    s_lat, s_lon, s_name = data["start"]
-    stops = data["stops"]
+    rd = st.session_state.route_data
+    sp = st.session_state.start_point
+    
+    st.info(f"🕒 Время выезда: {rd['time']} (МСК)")
 
-    st.info(f"🕒 Время выезда: {data['msk_start_time']} (МСК)")
+    m = folium.Map(location=[sp['lat'], sp['lon']], zoom_start=11)
+    folium.Marker([sp['lat'], sp['lon']], icon=folium.Icon(color='red', icon='home'), tooltip="СТАРТ").add_to(m)
+    
+    path = [[sp['lat'], sp['lon']]]
+    for i, p in enumerate(rd['stops'], 1):
+        folium.Marker([p['lat'], p['lon']], tooltip=f"{i}. {p['name']}", icon=folium.Icon(color='blue')).add_to(m)
+        path.append([p['lat'], p['lon']])
+    path.append([sp['lat'], sp['lon']]) # Возврат
+    
+    folium.PolyLine(path, color="#2980b9", weight=4).add_to(m)
+    st_folium(m, width="100%", height=500, key="main_map")
 
-    m = folium.Map(location=[s_lat, s_lon], zoom_start=11)
-    all_pts = [(s_lat, s_lon)] + [(p['lat'], p['lon']) for p in stops] + [(s_lat, s_lon)]
-    folium.PolyLine(all_pts, color="#2980b9", weight=5).add_to(m)
-    folium.Marker([s_lat, s_lon], icon=folium.Icon(color="red", icon="home")).add_to(m)
-
-    for i, p in enumerate(stops, 1):
-        folium.Marker(
-            [p["lat"], p["lon"]], 
-            tooltip=f"{i}. {p['name']} ({p['open']}:00-{p['close']}:00)",
-            icon=folium.Icon(color="blue")
-        ).add_to(m)
-
-    st_folium(m, width="100%", height=500, returned_objects=[], key="map_final")
-
-    # Исправленная ссылка на Google Maps (API Directions)
-    waypoints = "|".join([f"{p['lat']},{p['lon']}" for p in stops])
-    google_url = f"https://www.google.com/maps/dir/?api=1&origin={s_lat},{s_lon}&destination={s_lat},{s_lon}&waypoints={waypoints}&travelmode=driving"
-
+    # Ссылка в Google Maps
+    wp = "|".join([f"{p['lat']},{p['lon']}" for p in rd['stops']])
+    g_url = f"https://www.google.com/maps/dir/?api=1&origin={sp['lat']},{sp['lon']}&destination={sp['lat']},{sp['lon']}&waypoints={wp}&travelmode=driving"
+    
     st.markdown(f"""
-        <a href="{google_url}" target="_blank" style="text-decoration:none;">
-            <div style="background:#28a745;color:white;padding:20px;text-align:center;border-radius:15px;font-size:24px;font-weight:bold;margin-bottom:20px;">
-                🚀 ОТКРЫТЬ В GOOGLE MAPS
+        <a href="{g_url}" target="_blank" style="text-decoration:none;">
+            <div style="background:#28a745;color:white;padding:15px;text-align:center;border-radius:10px;font-weight:bold;font-size:18px;">
+                🗺 ОТКРЫТЬ МАРШРУТ В GOOGLE MAPS
             </div>
         </a>
     """, unsafe_allow_html=True)
-
-    with st.expander("📝 Детальный план (порядок объезда)"):
-        st.write(f"**Старт:** {s_name}")
-        for i, p in enumerate(stops, 1):
-            st.write(f"{i}. **{p['name']}** — работает с {p['open']}:00 до {p['close']}:00")
-        st.write(f"**Финиш:** Возврат на старт")

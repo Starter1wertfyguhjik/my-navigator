@@ -18,17 +18,33 @@ if "route_data" not in st.session_state:
 st.title("🚗 Умный Навигатор (Режим работы + Дороги)")
 
 # ---------------- ФУНКЦИЯ ПОИСКА ----------------
+@st.cache_data(ttl=3600)
 def address_search_provider(search_term: str):
-    if not search_term or len(search_term) < 4:
+    if not search_term or len(search_term) < 3: # Снизили до 3 символов
         return []
-    url = "https://nominatim.openstreetmap.org/search"
-    params = {"q": search_term, "format": "json", "limit": 8, "countrycodes": "ru"}
-    headers = {"User-Agent": "SmartNav_Searchbox_2026"}
+    
+    # Используем Photon API - он разрешает живой поиск
+    url = "https://photon.komoot.io/api/"
+    params = {"q": search_term, "limit": 10, "lang": "ru"}
+    
     try:
-        r = requests.get(url, params=params, headers=headers, timeout=5)
-        return [x["display_name"] for x in r.json()]
+        r = requests.get(url, params=params, timeout=5)
+        if r.status_code == 200:
+            features = r.json().get("features", [])
+            results = []
+            for f in features:
+                p = f.get("properties", {})
+                c = f.get("geometry", {}).get("coordinates") # [lon, lat]
+                
+                # Формируем красивое имя
+                name = ", ".join(filter(None, [p.get("city"), p.get("street"), p.get("housenumber")])) or p.get("name", "???")
+                
+                # Возвращаем данные: (Текст для списка, Данные для кода)
+                results.append((name, {"lat": c[1], "lon": c[0], "name": name}))
+            return results
     except:
-        return []
+        pass
+    return []
 
 # ---------------- КЭШИРОВАННЫЙ ГЕОКОДЕР ----------------
 @st.cache_data
@@ -92,19 +108,17 @@ with st.sidebar:
     with col_time2:
         close_h = st.number_input("Закрытие", 0, 23, 21)
     
-    if st.button("➕ Добавить в список"):
+   if st.button("➕ Добавить в список"):
         if new_point_addr:
-            if open_h >= close_h:
-                st.error("Время открытия должно быть меньше времени закрытия!")
-            else:
-                st.session_state.points_list.append({
-                    "addr": new_point_addr, 
-                    "open": open_h, 
-                    "close": close_h
-                })
-                st.toast("Точка добавлена")
-        else:
-            st.warning("Выберите адрес!")
+            # new_point_addr теперь содержит lat и lon из поиска!
+            st.session_state.points_list.append({
+                "addr": new_point_addr["name"],
+                "lat": new_point_addr["lat"],
+                "lon": new_point_addr["lon"],
+                "open": open_h,
+                "close": close_h
+            })
+            st.toast("Точка добавлена")
 
     if st.session_state.points_list:
         st.write("**Ваш список:**")

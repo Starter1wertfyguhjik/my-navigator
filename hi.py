@@ -21,18 +21,21 @@ st.title("🚗 Умный Навигатор (Стабильная версия)
 # --- ФУНКЦИЯ ГЕОКОДИРОВАНИЯ (ПОИСКА) ---
 def get_location_data(query):
     if not query: return None
-    url = f"https://photon.komoot.io/api/?q={query}&limit=5&lang=ru"
+    # Используем альтернативный сервер Nominatim напрямую
+    url = f"https://nominatim.openstreetmap.org/search?q={query}&format=json&limit=1&addressdetails=1"
+    headers = {"User-Agent": "MyRouteApp_Test_123"} # Обязательно добавьте это!
     try:
-        r = requests.get(url, timeout=5)
-        features = r.json().get("features", [])
-        if features:
-            f = features[0]
-            p = f["properties"]
-            c = f["geometry"]["coordinates"]
-            name = ", ".join(filter(None, [p.get("city"), p.get("street"), p.get("housenumber")])) or p.get("name", "Место")
-            return {"lat": c[1], "lon": c[0], "name": name}
-    except:
-        st.error("Ошибка связи с сервером поиска")
+        r = requests.get(url, headers=headers, timeout=5)
+        data = r.json()
+        if data:
+            item = data[0]
+            return {
+                "lat": float(item["lat"]),
+                "lon": float(item["lon"]),
+                "name": item["display_name"]
+            }
+    except Exception as e:
+        st.error(f"Техническая ошибка: {e}")
     return None
 
 # --- ЗАПРОС ДОРОГ (OSRM) ---

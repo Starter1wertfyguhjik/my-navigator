@@ -19,16 +19,36 @@ st.title("🚗 Умный Навигатор (Режим работы + Доро
 
 # ---------------- ФУНКЦИЯ ПОИСКА ----------------
 def address_search_provider(search_term: str):
-    if not search_term or len(search_term) < 4:
+    # 1. Порог в 2 символа для быстрого отклика
+    if not search_term or len(search_term) < 2:
         return []
+    
     url = "https://nominatim.openstreetmap.org/search"
-    params = {"q": search_term, "format": "json", "limit": 8, "countrycodes": "ru"}
-    headers = {"User-Agent": "SmartNav_Searchbox_2026"}
+    params = {
+        "q": search_term, 
+        "format": "json", 
+        "limit": 10, 
+        "countrycodes": "ru"
+    }
+    
+    # 2. Уникальный заголовок (Nominatim это требует!)
+    headers = {
+        "User-Agent": "SmartNavigator_App_Testing_2026_User" 
+    }
+    
     try:
         r = requests.get(url, params=params, headers=headers, timeout=5)
-        return [x["display_name"] for x in r.json()]
-    except:
-        return []
+        
+        # Если API ответил ошибкой (например, бан по IP)
+        if r.status_code != 200:
+            return [f"Ошибка API: {r.status_code}"]
+            
+        data = r.json()
+        # Возвращаем только названия для списка
+        return [x["display_name"] for x in data]
+    
+    except Exception as e:
+        return [f"Ошибка соединения: {str(e)}"]
 
 # ---------------- КЭШИРОВАННЫЙ ГЕОКОДЕР ----------------
 @st.cache_data

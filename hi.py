@@ -202,26 +202,25 @@ if btn_calc:
         st.error("Заполните старт и добавьте точки!")
     else:
         with st.spinner("Рассчитываем маршрут по реальным дорогам..."):
-            start_coords = get_coordinates_cached(start_addr)
-            if start_coords:
-                points_data = []
-                for p in st.session_state.points_list:
-                    coords = get_coordinates_cached(p["addr"])
-                    if coords:
-                        points_data.append({
-                            "lat": coords[0], "lon": coords[1], 
-                            "name": coords[2], "open": p["open"], "close": p["close"]
-                        })
+            # ВАЖНО: Мы больше не вызываем get_coordinates_cached!
+            # Данные берутся напрямую из объектов поиска.
+            
+            try:
+                s_lat = start_addr["lat"]
+                s_lon = start_addr["lon"]
+                s_name = start_addr["name"]
                 
-                if points_data:
-                    ordered, msk_time = optimize_route((start_coords[0], start_coords[1]), points_data)
-                    st.session_state.route_data = {
-                        "start": start_coords, "stops": ordered, "msk_start_time": msk_time
-                    }
-                else:
-                    st.error("Координаты точек не найдены.")
-            else:
-                st.error("Старт не найден.")
+                # Запускаем оптимизацию. points_list уже содержит координаты.
+                ordered, msk_time = optimize_route((s_lat, s_lon), st.session_state.points_list)
+                
+                # Сохраняем результат для отрисовки карты
+                st.session_state.route_data = {
+                    "start": (s_lat, s_lon, s_name),
+                    "stops": ordered,
+                    "msk_start_time": msk_time
+                }
+            except Exception as e:
+                st.error(f"Ошибка при обработке координат: {e}")
 
 # ---------------- ВЫВОД ----------------
 if st.session_state.route_data:

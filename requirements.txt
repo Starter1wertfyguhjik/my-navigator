@@ -4,3 +4,4 @@ streamlit-folium
 geopy
 requests
 streamlit-searchbox
+pytz

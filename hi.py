@@ -18,37 +18,44 @@ if "route_data" not in st.session_state:
 st.title("🚗 Умный Навигатор (Режим работы + Дороги)")
 
 # ---------------- ФУНКЦИЯ ПОИСКА ----------------
+import time
+
+@st.cache_data(ttl=3600)  # Кэшируем результаты поиска на час
+def search_photon(search_term):
+    # Используем Photon API (он быстрее и реже выдает 429)
+    url = "https://photon.komoot.io/api/"
+    params = {
+        "q": search_term,
+        "limit": 10,
+        "lang": "ru"
+    }
+    try:
+        r = requests.get(url, params=params, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            features = data.get("features", [])
+            results = []
+            for f in features:
+                p = f.get("properties", {})
+                # Собираем красивое название: Город, Улица, Номер
+                name_parts = [p.get("city"), p.get("street"), p.get("housenumber")]
+                full_name = ", ".join([x for x in name_parts if x])
+                if not full_name:
+                    full_name = p.get("name", "Неизвестное место")
+                results.append(full_name)
+            return list(set(results)) # Убираем дубликаты
+        return []
+    except:
+        return []
+
 def address_search_provider(search_term: str):
-    # 1. Порог в 2 символа для быстрого отклика
-    if not search_term or len(search_term) < 2:
+    if not search_term or len(search_term) < 3:
         return []
     
-    url = "https://nominatim.openstreetmap.org/search"
-    params = {
-        "q": search_term, 
-        "format": "json", 
-        "limit": 10, 
-        "countrycodes": "ru"
-    }
+    # Небольшая пауза (0.3 сек), чтобы не спамить при быстром наборе
+    time.sleep(0.3)
     
-    # 2. Уникальный заголовок (Nominatim это требует!)
-    headers = {
-        "User-Agent": "SmartNavigator_App_Testing_2026_User" 
-    }
-    
-    try:
-        r = requests.get(url, params=params, headers=headers, timeout=5)
-        
-        # Если API ответил ошибкой (например, бан по IP)
-        if r.status_code != 200:
-            return [f"Ошибка API: {r.status_code}"]
-            
-        data = r.json()
-        # Возвращаем только названия для списка
-        return [x["display_name"] for x in data]
-    
-    except Exception as e:
-        return [f"Ошибка соединения: {str(e)}"]
+    return search_photon(search_term)
 
 # ---------------- КЭШИРОВАННЫЙ ГЕОКОДЕР ----------------
 @st.cache_data
